@@ -1,0 +1,30 @@
+{
+  "name": "@a2a-bsv/core",
+  "version": "0.1.0",
+  "description": "BSV agent-to-agent payment library wrapping @bsv/sdk and @bsv/wallet-toolbox",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "test": "npx tsx test/wallet.test.ts"
+  },
+  "dependencies": {
+    "@bsv/sdk": "^1.10.3",
+    "@bsv/wallet-toolbox": "^1.7.22",
+    "dotenv": "^17.2.3",
+    "knex": "^3.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "license": "MIT"
+}
