@@ -143,8 +143,8 @@ async function cmdAddress() {
     network: NETWORK,
     identityKey: identity.identityKey,
     note: NETWORK === 'testnet'
-      ? 'Fund this address at https://witnessonchain.com/faucet/tbsv'
-      : 'This is a mainnet address — send real BSV here',
+      ? `Fund this address at https://witnessonchain.com/faucet/tbsv — View on explorer: https://test.whatsonchain.com/address/${address}`
+      : `This is a mainnet address — View on explorer: https://whatsonchain.com/address/${address}`,
   });
 }
 

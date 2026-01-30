@@ -63,7 +63,7 @@ Output:
     "address": "mvFheDXoNgzC4ffjaqz18ALZ9igx26Q9Y7",
     "network": "testnet",
     "identityKey": "035b72...",
-    "note": "Fund this address at https://witnessonchain.com/faucet/tbsv"
+    "note": "Fund this address at https://witnessonchain.com/faucet/tbsv — View on explorer: https://test.whatsonchain.com/address/mvFheDXoNgzC4ffjaqz18ALZ9igx26Q9Y7"
   }
 }
 ```
@@ -73,6 +73,10 @@ Output:
 Go to the **WitnessOnChain testnet faucet**: https://witnessonchain.com/faucet/tbsv
 
 Paste your **testnet address** (from Step 3) and request funds. The faucet has ~2,078 testnet BSV available.
+
+You can track your address and transactions on **WhatsonChain**:
+- **Testnet explorer**: `https://test.whatsonchain.com/address/<your-address>`
+- **Mainnet explorer**: `https://whatsonchain.com/address/<your-address>`
 
 Verify your balance:
 ```bash

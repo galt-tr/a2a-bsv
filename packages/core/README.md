@@ -226,7 +226,7 @@ Each wallet creates:
 ## Known Issues
 
 - **Wallet-toolbox bug:** `Setup.createWalletSQLite` has an internal `randomBytesHex` stub that throws. This library works around it by constructing wallet components manually.
-- **Funding required:** `createPayment()` requires the wallet to have spendable UTXOs. On testnet, use the [BSV testnet faucet](https://faucet.bsvblockchain.org/) to fund your wallet.
+- **Funding required:** `createPayment()` requires the wallet to have spendable UTXOs. On testnet, use the [WitnessOnChain faucet](https://witnessonchain.com/faucet/tbsv) to fund your wallet. Track transactions on [WhatsonChain testnet](https://test.whatsonchain.com/) or [WhatsonChain mainnet](https://whatsonchain.com/).
 
 ## Development
 

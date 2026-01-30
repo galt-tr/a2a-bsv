@@ -167,6 +167,9 @@ The other agent replies with:
 ```
 
 Present the `result` to the user. Confirm the payment was accepted via `receipt.accepted`.
+Include a link to the transaction on WhatsonChain:
+- **Testnet**: `https://test.whatsonchain.com/tx/<txid>`
+- **Mainnet**: `https://whatsonchain.com/tx/<txid>`
 
 ---
 

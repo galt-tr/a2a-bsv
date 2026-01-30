@@ -129,6 +129,10 @@ The `receipt` object contains:
 | `accepted` | boolean | Whether payment was accepted        |
 | `txid`     | string  | Transaction ID of the payment       |
 
+Transaction details can be verified on **WhatsonChain**:
+- **Testnet**: `https://test.whatsonchain.com/tx/<txid>`
+- **Mainnet**: `https://whatsonchain.com/tx/<txid>`
+
 ```json
 {
   "protocol": "bsv-pay-v1",
