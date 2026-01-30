@@ -201,6 +201,126 @@ async function cmdAccept(beef, derivationPrefix, derivationSuffix, senderIdentit
   ok(receipt);
 }
 
+async function cmdFund(rawTxHex, voutStr) {
+  if (!rawTxHex) {
+    return fail('Usage: fund <raw_tx_hex> [vout] — Import a raw P2PKH transaction paying to your root address');
+  }
+  const vout = parseInt(voutStr || '0', 10);
+
+  // Import SDK for Transaction parsing
+  let sdk;
+  try {
+    sdk = await import('@bsv/sdk');
+  } catch {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const repoRoot = path.resolve(__dirname, '..', '..', '..');
+    const sdkPath = path.join(repoRoot, 'packages', 'core', 'node_modules', '@bsv', 'sdk', 'dist', 'esm', 'mod.js');
+    sdk = await import(sdkPath);
+  }
+  const { Transaction } = sdk;
+
+  // Parse the raw transaction
+  const tx = Transaction.fromHex(rawTxHex);
+  const txid = tx.id('hex');
+  const output = tx.outputs[vout];
+  if (!output) {
+    return fail(`Output index ${vout} not found in transaction (has ${tx.outputs.length} outputs)`);
+  }
+
+  // For external funding (faucet, direct P2PKH), the BRC-100 wallet's
+  // internalizeAction requires valid AtomicBEEF with merkle proofs.
+  // Unconfirmed external txs don't have proofs yet, so we insert the UTXO
+  // directly into the wallet's SQLite storage.
+  let knexLib;
+  try {
+    knexLib = (await import('knex')).default;
+  } catch {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const repoRoot = path.resolve(__dirname, '..', '..', '..');
+    knexLib = (await import(path.join(repoRoot, 'packages', 'core', 'node_modules', 'knex', 'knex.mjs'))).default;
+  }
+
+  // Find the wallet SQLite database
+  const dbFiles = fs.readdirSync(WALLET_DIR).filter(f => f.endsWith('.sqlite') && f !== 'wallet.sqlite');
+  if (dbFiles.length === 0) {
+    return fail('No wallet database found. Run setup first.');
+  }
+  const dbPath = path.join(WALLET_DIR, dbFiles[0]);
+
+  const knex = knexLib({ client: 'sqlite3', connection: { filename: dbPath }, useNullAsDefault: true });
+
+  try {
+    // Get the user
+    const user = await knex('users').first();
+    if (!user) { await knex.destroy(); return fail('No user found in wallet database'); }
+
+    // Get the default basket
+    const basket = await knex('output_baskets').where({ userId: user.userId, name: 'default' }).first();
+    if (!basket) { await knex.destroy(); return fail('No default basket found'); }
+
+    // Check if this UTXO is already imported
+    const existing = await knex('outputs').where({ txid, vout }).first();
+    if (existing) {
+      await knex.destroy();
+      return ok({ txid, satoshis: output.satoshis, vout, alreadyImported: true });
+    }
+
+    // Insert a proven_txs record for the transaction (unconfirmed)
+    const [provenTxId] = await knex('proven_txs').insert({
+      txid,
+      height: 0,
+      index: 0,
+      merklePath: '',
+      rawTx: Buffer.from(rawTxHex, 'hex'),
+      blockHash: '',
+      merkleRoot: '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    // Insert a transactions record
+    const [transactionId] = await knex('transactions').insert({
+      userId: user.userId,
+      provenTxId,
+      status: 'unproven',
+      reference: `fund-${txid.slice(0, 12)}`,
+      isOutgoing: 0,
+      satoshis: output.satoshis,
+      description: 'External funding',
+      txid,
+      rawTx: Buffer.from(rawTxHex, 'hex'),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    // Insert the output record
+    await knex('outputs').insert({
+      userId: user.userId,
+      transactionId,
+      basketId: basket.basketId,
+      spendable: 1,
+      change: 0,
+      vout,
+      satoshis: output.satoshis,
+      providedBy: 'external',
+      purpose: 'funding',
+      type: 'P2PKH',
+      outputDescription: 'External funding',
+      txid,
+      lockingScript: output.lockingScript.toHex(),
+      scriptLength: output.lockingScript.toHex().length / 2,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    await knex.destroy();
+    ok({ txid, satoshis: output.satoshis, vout, imported: true });
+  } catch (err) {
+    await knex.destroy();
+    fail(`Failed to import UTXO: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Main dispatch
 // ---------------------------------------------------------------------------
@@ -229,8 +349,11 @@ try {
     case 'accept':
       await cmdAccept(args[0], args[1], args[2], args[3], args.slice(4).join(' ') || undefined);
       break;
+    case 'fund':
+      await cmdFund(args[0], args[1]);
+      break;
     default:
-      fail(`Unknown command: ${command || '(none)'}. Available: setup, identity, balance, pay, verify, accept`);
+      fail(`Unknown command: ${command || '(none)'}. Available: setup, identity, address, balance, pay, verify, accept, fund`);
   }
 } catch (err) {
   fail(err instanceof Error ? err.message : String(err));

@@ -59,10 +59,11 @@ const IDENTITY_FILE = 'wallet-identity.json';
  * ```
  */
 export class BSVAgentWallet {
-  private setup: SetupWallet;
+  /** @internal — exposed for advanced operations (e.g. direct internalizeAction) */
+  public readonly _setup: SetupWallet;
 
   private constructor(setup: SetupWallet) {
-    this.setup = setup;
+    this._setup = setup;
   }
 
   // ---------------------------------------------------------------------------
@@ -129,7 +130,7 @@ export class BSVAgentWallet {
    * This is the key other agents use to send payments to you.
    */
   async getIdentityKey(): Promise<string> {
-    return this.setup.identityKey;
+    return this._setup.identityKey;
   }
 
   /**
@@ -139,7 +140,7 @@ export class BSVAgentWallet {
    * in the default basket.
    */
   async getBalance(): Promise<number> {
-    return await this.setup.wallet.balance();
+    return await this._setup.wallet.balance();
   }
 
   /**
@@ -147,7 +148,7 @@ export class BSVAgentWallet {
    * stopping the background monitor.
    */
   async destroy(): Promise<void> {
-    await this.setup.wallet.destroy();
+    await this._setup.wallet.destroy();
   }
 
   // ---------------------------------------------------------------------------
@@ -167,7 +168,7 @@ export class BSVAgentWallet {
    * @param params.description — Optional human-readable note.
    */
   async createPayment(params: PaymentParams): Promise<PaymentResult> {
-    return buildPayment(this.setup, params);
+    return buildPayment(this._setup, params);
   }
 
   // ---------------------------------------------------------------------------
@@ -192,7 +193,7 @@ export class BSVAgentWallet {
    * transaction hasn't been broadcast yet, broadcasts it.
    */
   async acceptPayment(params: AcceptParams): Promise<AcceptResult> {
-    return acceptPayment(this.setup, params);
+    return acceptPayment(this._setup, params);
   }
 
   // ---------------------------------------------------------------------------
@@ -201,7 +202,7 @@ export class BSVAgentWallet {
 
   /** Get the underlying wallet-toolbox SetupWallet for advanced operations. */
   getSetup(): SetupWallet {
-    return this.setup;
+    return this._setup;
   }
 
   // ---------------------------------------------------------------------------
