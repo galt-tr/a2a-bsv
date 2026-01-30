@@ -13,6 +13,83 @@
 
 ---
 
+## Quick Start
+
+### Prerequisites
+- Node.js v18+
+- npm
+
+### 1. Clone and set up
+
+```bash
+git clone https://github.com/galt-tr/a2a-bsv.git
+cd a2a-bsv
+
+# Build core library + create wallet (one command)
+bash skills/bsv-pay/scripts/setup.sh
+```
+
+This will:
+- Install dependencies and build the `@a2a-bsv/core` library
+- Create a BSV testnet wallet at `~/.clawdbot/bsv-wallet/`
+- Display your agent's identity key (compressed public key)
+
+### 2. Install the skill in your Clawdbot
+
+```bash
+# Symlink into your agent's workspace
+ln -s "$(pwd)/skills/bsv-pay" ~/clawd/skills/bsv-pay
+```
+
+Your agent will now automatically use the `bsv-pay` skill when handling payments.
+
+### 3. Fund your testnet wallet
+
+Get free testnet BSV from the **WitnessOnChain faucet**: https://witnessonchain.com/faucet/tbsv
+
+You'll need a testnet BSV address. For now, get your identity key and use a testnet-compatible wallet to send to it:
+
+```bash
+NODE_PATH=$(pwd)/node_modules node skills/bsv-pay/scripts/bsv-agent-cli.mjs identity
+```
+
+### 4. Start paying other agents
+
+Once funded, your agent can pay any other agent that has this skill installed. Just tell your agent:
+
+```
+"Pay @other-agent 100 sats to review this code"
+```
+
+Or the other agent can send you a `bsv-pay-v1` protocol message to request payment.
+
+### For non-Clawdbot users
+
+The core library works standalone:
+
+```bash
+cd packages/core
+npm install
+npm run build
+
+# Use in your own project
+npm install ./packages/core
+```
+
+```typescript
+import { BSVAgentWallet } from '@a2a-bsv/core';
+
+const wallet = await BSVAgentWallet.create({
+  network: 'testnet',
+  storageDir: './my-wallet'
+});
+
+console.log(await wallet.getIdentityKey());
+console.log(await wallet.getBalance());
+```
+
+---
+
 ## Overview
 
 **A2A-BSV** defines `bsv-p2pkh` — a new payment scheme for Google's [Agent Payments Protocol (AP2)](https://github.com/google-agentic-commerce/AP2) via the [x402 extension](https://github.com/google-agentic-commerce/a2a-x402). It enables AI agents to pay each other in BSV with sub-cent fees, instant settlement, and cryptographic verification — no full nodes or RPC providers required.
@@ -45,6 +122,7 @@ Agent-to-agent payments will overwhelmingly be micropayments — fractions of a 
 
 ## Table of Contents
 
+- [Quick Start](#quick-start)
 - [Overview](#overview)
 - [Architecture](#architecture)
   - [Payment Flow](#payment-flow)
@@ -435,22 +513,35 @@ Each derived key is deterministic but unlinkable — an observer cannot correlat
 
 ```
 a2a-bsv/
-├── README.md                   # This file
+├── README.md                       # This file
 ├── docs/
-│   ├── PRD.md                  # Full PRD & Technical Specification
-│   └── REVIEW_NOTES.md         # Expert review feedback and changes
-├── spec/                       # (Phase 1) Scheme specification
+│   ├── PRD.md                      # Full PRD & Technical Specification
+│   ├── CLAWDBOT_INTEGRATION.md     # Clawdbot-to-Clawdbot payment design
+│   └── REVIEW_NOTES.md             # Expert review feedback and changes
+├── skills/
+│   └── bsv-pay/                    # ★ Clawdbot skill (install this)
+│       ├── SKILL.md                # Agent instructions (payer + receiver)
+│       ├── scripts/
+│       │   ├── setup.sh            # First-run setup
+│       │   └── bsv-agent-cli.mjs   # CLI: setup/identity/balance/pay/verify/accept
+│       ├── references/
+│       │   └── protocol.md         # Payment protocol reference
+│       └── package.json
+├── packages/
+│   └── core/                       # @a2a-bsv/core library
+│       ├── src/                    # TypeScript source
+│       │   ├── wallet.ts           # BSVAgentWallet class
+│       │   ├── payment.ts          # Payment construction (BRC-29)
+│       │   ├── verify.ts           # SPV verification + acceptance
+│       │   ├── types.ts            # All interfaces
+│       │   └── config.ts           # Network config
+│       ├── dist/                   # Compiled output
+│       └── package.json
+├── spec/                           # (Phase 1) x402 scheme spec
 │   └── bsv-p2pkh/
-│       └── scheme.md           # x402 scheme spec (submission-ready)
-├── packages/                   # (Phase 3) Libraries
-│   ├── client/                 # @x402/bsv-client
-│   ├── merchant/               # @x402/bsv-merchant
-│   └── facilitator/            # BSV Facilitator service
-├── python/                     # (Phase 3) Python package
-│   └── x402_bsv/
-├── examples/                   # (Phase 4) Reference implementations
+├── examples/                       # (Phase 4) Reference implementations
 │   └── agent-micropayment/
-└── test/                       # Test vectors and integration tests
+└── test/                           # Test vectors
     └── vectors/
 ```
 
