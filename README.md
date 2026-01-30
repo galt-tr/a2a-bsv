@@ -456,11 +456,70 @@ a2a-bsv/
 
 ---
 
+## Clawdbot-to-Clawdbot Payments
+
+Beyond the core A2A protocol, this project defines how **any Clawdbot instance can pay any other Clawdbot instance** for services — turning every agent into a potential buyer or seller in an AI agent economy.
+
+→ **Full outline: [docs/CLAWDBOT_INTEGRATION.md](docs/CLAWDBOT_INTEGRATION.md)**
+
+### How It Works
+
+BSV payments are packaged as **Clawdbot skills** — installable packages that add payment capabilities to any agent:
+
+```bash
+# Install payment skills
+clawdbot skills add bsv-wallet    # Core wallet (BRC-100)
+clawdbot skills add bsv-pay       # Pay other agents
+clawdbot skills add bsv-merchant  # Sell your agent's services
+```
+
+Once installed, agents can pay each other naturally:
+
+```
+User: "Ask @researcher to analyze this paper. Budget: 500 sats."
+
+Agent: [negotiates with @researcher → 500 sats for paper analysis]
+       [constructs BSV transaction via BRC-100 wallet]
+       [sends payment + task to @researcher]
+       [receives analysis + on-chain receipt]
+       
+       "Analysis complete. Cost: 500 sats (~$0.10). TX: abc123..."
+```
+
+### Architecture
+
+| Component | Purpose | Distribution |
+|---|---|---|
+| **bsv-wallet** skill | BRC-100 wallet management, key derivation, UTXO pool | ClawdHub / git |
+| **bsv-pay** skill | Client-side: negotiate, pay, verify receipts | ClawdHub / git |
+| **bsv-merchant** skill | Server-side: receive payments, price services, settle | ClawdHub / git |
+| **bsv-facilitator** skill | Optional self-hosted SPV verification + broadcast | ClawdHub / git |
+| Hosted Facilitator | Shared BSV facilitator at `facilitator.a2a-bsv.dev` | Hosted service |
+
+### Communication Paths
+
+| Scenario | Transport | How |
+|---|---|---|
+| Same-gateway agents | `sessions_send` | Direct inter-agent messaging |
+| Remote agents (any channel) | Telegram / Signal / etc. | Structured `[BSV-PAY-v1]` protocol blocks |
+| Remote agents (direct) | WebSocket (Tailscale/VPN) | Gateway-to-gateway pairing |
+| Any A2A agent (Phase 4) | A2A protocol | Standard x402 with `bsv-p2pkh` scheme |
+
+### User Controls
+
+- **Auto-approve budget**: Agent handles micropayments autonomously (default: ≤1000 sats)
+- **User approval**: Required for payments above budget threshold
+- **Daily spending cap**: Hard limit on total daily spend
+- **Node approval**: iOS/Android push notification for high-value payments (future)
+
+---
+
 ## Documentation
 
 | Document | Description |
 |---|---|
-| [PRD & Technical Specification](docs/PRD.md) | Complete 77KB specification covering architecture, data structures, message flows, security analysis, and implementation plan |
+| [PRD & Technical Specification](docs/PRD.md) | Complete specification covering architecture, data structures, message flows, security analysis, and implementation plan |
+| [Clawdbot Integration](docs/CLAWDBOT_INTEGRATION.md) | How Clawdbot instances pay each other — skills, MCP tools, inter-agent flows, UX, configuration |
 | [Review Notes](docs/REVIEW_NOTES.md) | Expert review feedback — 18 substantive revisions applied |
 
 ---
