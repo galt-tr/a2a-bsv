@@ -1,0 +1,8 @@
+{
+  "name": "bsv-pay",
+  "version": "0.1.0",
+  "description": "Clawdbot skill for agent-to-agent BSV payments using the bsv-pay-v1 protocol",
+  "private": true,
+  "keywords": ["clawdbot", "skill", "bsv", "payments", "agent-to-agent"],
+  "license": "MIT"
+}
