@@ -11,6 +11,7 @@
  * Commands:
  *   setup                                    — Create wallet, show identity key
  *   identity                                 — Show identity public key
+ *   address                                  — Show testnet/mainnet P2PKH receive address
  *   balance                                  — Show balance in satoshis
  *   pay <pubkey> <satoshis> [description]    — Create payment → JSON PaymentResult
  *   verify <beef_base64>                     — Verify incoming BEEF → JSON VerifyResult
@@ -101,6 +102,52 @@ async function cmdIdentity() {
   ok({ identityKey });
 }
 
+async function cmdAddress() {
+  // Derive a P2PKH address from the root key for receiving funds (e.g. from faucet).
+  const identityPath = path.join(WALLET_DIR, 'wallet-identity.json');
+  if (!fs.existsSync(identityPath)) {
+    return fail('Wallet not initialized. Run: setup');
+  }
+  const identity = JSON.parse(fs.readFileSync(identityPath, 'utf-8'));
+
+  // Import SDK — resolve from the same place the core library lives
+  let sdk;
+  try {
+    sdk = await import('@bsv/sdk');
+  } catch {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const repoRoot = path.resolve(__dirname, '..', '..', '..');
+    // SDK is in packages/core/node_modules
+    const sdkPath = path.join(repoRoot, 'packages', 'core', 'node_modules', '@bsv', 'sdk', 'dist', 'esm', 'mod.js');
+    sdk = await import(sdkPath);
+  }
+
+  const { PrivateKey, Hash, Utils } = sdk;
+  const privKey = PrivateKey.fromHex(identity.rootKeyHex);
+  const pubKey = privKey.toPublicKey();
+
+  // Derive P2PKH address: HASH160(compressed pubkey) → base58check
+  // BSV mainnet prefix: 0x00 (starts with '1')
+  // BSV testnet prefix: 0x6f (starts with 'm' or 'n')
+  const pubKeyBytes = pubKey.encode(true); // compressed
+  const hash160 = Hash.hash160(pubKeyBytes);
+
+  const prefix = NETWORK === 'mainnet' ? 0x00 : 0x6f;
+  const payload = new Uint8Array([prefix, ...hash160]);
+  const checksum = Hash.hash256(Array.from(payload)).slice(0, 4);
+  const addressBytes = new Uint8Array([...payload, ...checksum]);
+  const address = Utils.toBase58(Array.from(addressBytes));
+
+  ok({
+    address,
+    network: NETWORK,
+    identityKey: identity.identityKey,
+    note: NETWORK === 'testnet'
+      ? 'Fund this address at https://witnessonchain.com/faucet/tbsv'
+      : 'This is a mainnet address — send real BSV here',
+  });
+}
+
 async function cmdBalance() {
   const wallet = await BSVAgentWallet.load({ network: NETWORK, storageDir: WALLET_DIR });
   const total = await wallet.getBalance();
@@ -166,6 +213,9 @@ try {
       break;
     case 'identity':
       await cmdIdentity();
+      break;
+    case 'address':
+      await cmdAddress();
       break;
     case 'balance':
       await cmdBalance();

@@ -13,67 +13,126 @@
 
 ---
 
-## Quick Start
+## Quick Start: Set Up Your Agent for BSV Payments
+
+Complete instructions for getting any Clawdbot paying and receiving BSV. Takes ~5 minutes.
 
 ### Prerequisites
-- Node.js v18+
-- npm
+- **Node.js v18+** and **npm**
+- A running **Clawdbot** instance (any channel — Telegram, Signal, etc.)
 
-### 1. Clone and set up
+### Step 1: Clone the repo
 
 ```bash
 git clone https://github.com/galt-tr/a2a-bsv.git
 cd a2a-bsv
+```
 
-# Build core library + create wallet (one command)
+### Step 2: Build and create wallet
+
+```bash
 bash skills/bsv-pay/scripts/setup.sh
 ```
 
-This will:
-- Install dependencies and build the `@a2a-bsv/core` library
-- Create a BSV testnet wallet at `~/.clawdbot/bsv-wallet/`
-- Display your agent's identity key (compressed public key)
+This does everything:
+- Installs dependencies (`@bsv/sdk`, `@bsv/wallet-toolbox`)
+- Builds the `@a2a-bsv/core` TypeScript library
+- Creates a BSV **testnet** wallet at `~/.clawdbot/bsv-wallet/`
+- Displays your agent's **identity key** (compressed public key)
 
-### 2. Install the skill in your Clawdbot
+You'll see output like:
+```
+✅ Wallet created!
+Identity key: 035b72582b840f5cf86b8f...
+```
+
+Save that identity key — other agents need it to send you payments.
+
+### Step 3: Get your testnet receive address
 
 ```bash
-# Symlink into your agent's workspace
+cd a2a-bsv
+NODE_PATH=$(pwd)/packages/core/node_modules node skills/bsv-pay/scripts/bsv-agent-cli.mjs address
+```
+
+Output:
+```json
+{
+  "success": true,
+  "data": {
+    "address": "mvFheDXoNgzC4ffjaqz18ALZ9igx26Q9Y7",
+    "network": "testnet",
+    "identityKey": "035b72...",
+    "note": "Fund this address at https://witnessonchain.com/faucet/tbsv"
+  }
+}
+```
+
+### Step 4: Fund your wallet with testnet BSV
+
+Go to the **WitnessOnChain testnet faucet**: https://witnessonchain.com/faucet/tbsv
+
+Paste your **testnet address** (from Step 3) and request funds. The faucet has ~2,078 testnet BSV available.
+
+Verify your balance:
+```bash
+NODE_PATH=$(pwd)/packages/core/node_modules node skills/bsv-pay/scripts/bsv-agent-cli.mjs balance
+```
+
+### Step 5: Install the skill in your Clawdbot
+
+```bash
+# Symlink the bsv-pay skill into your agent's workspace
 ln -s "$(pwd)/skills/bsv-pay" ~/clawd/skills/bsv-pay
 ```
 
-Your agent will now automatically use the `bsv-pay` skill when handling payments.
+Your agent now knows the `bsv-pay-v1` protocol. It can:
+- **Pay** other agents for services
+- **Receive** payments and execute tasks
+- **Negotiate** pricing automatically
 
-### 3. Fund your testnet wallet
+### Step 6: Pay another agent
 
-Get free testnet BSV from the **WitnessOnChain faucet**: https://witnessonchain.com/faucet/tbsv
-
-You'll need a testnet BSV address. For now, get your identity key and use a testnet-compatible wallet to send to it:
-
-```bash
-NODE_PATH=$(pwd)/node_modules node skills/bsv-pay/scripts/bsv-agent-cli.mjs identity
-```
-
-### 4. Start paying other agents
-
-Once funded, your agent can pay any other agent that has this skill installed. Just tell your agent:
-
+Tell your agent:
 ```
 "Pay @other-agent 100 sats to review this code"
 ```
 
-Or the other agent can send you a `bsv-pay-v1` protocol message to request payment.
+Or send a payment protocol message directly:
+```json
+{
+  "protocol": "bsv-pay-v1",
+  "action": "PAYMENT_OFFER",
+  "task": "Review this code for security issues",
+  "maxBudgetSats": 1000,
+  "payerIdentityKey": "035b72..."
+}
+```
+
+### CLI Reference
+
+All commands output clean JSON. Set `BSV_WALLET_DIR` and `BSV_NETWORK` env vars to customize.
+
+```bash
+# Set up for convenience
+export A2A_BSV="$(pwd)"
+alias bsv="NODE_PATH=$A2A_BSV/packages/core/node_modules node $A2A_BSV/skills/bsv-pay/scripts/bsv-agent-cli.mjs"
+
+bsv setup                       # Create wallet (first run)
+bsv identity                    # Show identity public key
+bsv address                     # Show P2PKH receive address (for faucet/funding)
+bsv balance                     # Check balance (confirmed/unconfirmed/total sats)
+bsv pay <pubkey> <sats> [desc]  # Create payment → returns BEEF + metadata
+bsv verify <beef_base64>        # Verify incoming payment BEEF
+bsv accept <beef> <prefix> <suffix> <senderKey> [desc]  # Accept payment
+```
 
 ### For non-Clawdbot users
 
-The core library works standalone:
+The core library works standalone as a TypeScript/Node.js package:
 
 ```bash
-cd packages/core
-npm install
-npm run build
-
-# Use in your own project
-npm install ./packages/core
+cd packages/core && npm install && npm run build
 ```
 
 ```typescript
@@ -84,8 +143,17 @@ const wallet = await BSVAgentWallet.create({
   storageDir: './my-wallet'
 });
 
-console.log(await wallet.getIdentityKey());
-console.log(await wallet.getBalance());
+const identity = await wallet.getIdentityKey();
+const balance = await wallet.getBalance();
+
+// Pay another agent
+const payment = await wallet.createPayment({
+  to: '02abc...recipient_pubkey',
+  satoshis: 500,
+  description: 'Code review payment'
+});
+// payment.beef → send this to the recipient
+// payment.derivationPrefix, derivationSuffix, senderIdentityKey → recipient needs these too
 ```
 
 ---

@@ -24,6 +24,7 @@ This skill lets you send and receive BSV (Bitcoin SV) payments to/from other Cla
 |---------|-------------|
 | `node scripts/bsv-agent-cli.mjs setup` | Create wallet (first run) |
 | `node scripts/bsv-agent-cli.mjs identity` | Show your public identity key |
+| `node scripts/bsv-agent-cli.mjs address` | Show P2PKH receive address (for funding) |
 | `node scripts/bsv-agent-cli.mjs balance` | Check wallet balance |
 | `node scripts/bsv-agent-cli.mjs pay <pubkey> <sats> [desc]` | Send payment |
 | `node scripts/bsv-agent-cli.mjs verify <beef_base64>` | Verify incoming payment |
