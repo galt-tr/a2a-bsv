@@ -37,8 +37,10 @@ bash skills/bsv-pay/scripts/setup.sh
 This does everything:
 - Installs dependencies (`@bsv/sdk`, `@bsv/wallet-toolbox`)
 - Builds the `@a2a-bsv/core` TypeScript library
-- Creates a BSV **testnet** wallet at `~/.clawdbot/bsv-wallet/`
+- Creates a BSV **mainnet** wallet at `~/.clawdbot/bsv-wallet/`
 - Displays your agent's **identity key** (compressed public key)
+
+> **Testnet**: To create a testnet wallet instead, run `BSV_NETWORK=testnet bash skills/bsv-pay/scripts/setup.sh`
 
 You'll see output like:
 ```
@@ -48,7 +50,7 @@ Identity key: 035b72582b840f5cf86b8f...
 
 Save that identity key — other agents need it to send you payments.
 
-### Step 3: Get your testnet receive address
+### Step 3: Get your receive address
 
 ```bash
 cd a2a-bsv
@@ -60,28 +62,90 @@ Output:
 {
   "success": true,
   "data": {
-    "address": "mvFheDXoNgzC4ffjaqz18ALZ9igx26Q9Y7",
-    "network": "testnet",
+    "address": "1FjkMASpZfYwHZC7sH1dJF8EHj6FAy7D6P",
+    "network": "mainnet",
     "identityKey": "035b72...",
-    "note": "Fund this address at https://witnessonchain.com/faucet/tbsv — View on explorer: https://test.whatsonchain.com/address/mvFheDXoNgzC4ffjaqz18ALZ9igx26Q9Y7"
+    "note": "This is a mainnet address — View on explorer: https://whatsonchain.com/address/1FjkMASpZfYwHZC7sH1dJF8EHj6FAy7D6P"
   }
 }
 ```
 
-### Step 4: Fund your wallet with testnet BSV
+### Step 4: Fund your wallet
 
-Go to the **WitnessOnChain testnet faucet**: https://witnessonchain.com/faucet/tbsv
+Funding is a two-part process: **send BSV** to your address, then **import** the transaction into the wallet so it has valid merkle proofs for creating payments.
 
-Paste your **testnet address** (from Step 3) and request funds. The faucet has ~2,078 testnet BSV available.
+#### 4a. Send BSV to your address
 
-You can track your address and transactions on **WhatsonChain**:
-- **Testnet explorer**: `https://test.whatsonchain.com/address/<your-address>`
-- **Mainnet explorer**: `https://whatsonchain.com/address/<your-address>`
+Send real BSV to the address from Step 3. Small amounts are all you need — **10,000 sats (~$0.50) is enough for thousands of micropayments**.
 
-Verify your balance:
+**Ways to fund:**
+- **Exchange**: Buy BSV on Coinbase, Kraken, Robinhood, etc. and withdraw to your address
+- **BSV wallet**: Send from HandCash, Centbee, or any BSV wallet
+- **Another agent**: Receive a payment from another A2A-BSV agent
+- **Mining/tips**: Any source of BSV works
+
+Track your transaction on **WhatsonChain**: `https://whatsonchain.com/tx/<your-txid>`
+
+> **Testing on testnet**: Use `BSV_NETWORK=testnet` with all commands, and fund via the [WitnessOnChain testnet faucet](https://witnessonchain.com/faucet/tbsv). Testnet explorer: https://test.whatsonchain.com
+
+#### 4b. Wait for 1 confirmation
+
+The import requires a confirmed transaction so it can fetch the merkle proof. BSV blocks are mined roughly every **10 minutes**. You can check confirmation status on WhatsonChain or by running:
+
+```bash
+curl -s "https://api.whatsonchain.com/v1/bsv/main/tx/<your-txid>" | jq .confirmations
+```
+
+#### 4c. Import the transaction into your wallet
+
+Once confirmed, import the UTXO with its merkle proof:
+
+```bash
+NODE_PATH=$(pwd)/packages/core/node_modules node skills/bsv-pay/scripts/bsv-agent-cli.mjs import <txid>
+```
+
+Example:
+```bash
+bsv import b829d5019f113db57493f52dd3aa79936943aa54f658f885920c16a0bc56f1fe
+```
+
+Output:
+```json
+{
+  "success": true,
+  "data": {
+    "txid": "b829d5019f113db57493f52dd3aa79936943aa54f658f885920c16a0bc56f1fe",
+    "vout": 0,
+    "satoshis": 6044122,
+    "blockHeight": 934297,
+    "confirmations": 1,
+    "imported": true,
+    "balance": 6044122,
+    "explorer": "https://whatsonchain.com/tx/b829d5019f113db57493f52dd3aa79936943aa54f658f885920c16a0bc56f1fe"
+  }
+}
+```
+
+**What `import` does under the hood:**
+1. Verifies the transaction has at least 1 confirmation
+2. Fetches the [TSC merkle proof](https://tsc.bitcoinassociation.net/standards/merkle-proof-standardised-format/) from WhatsonChain
+3. Fetches the raw transaction hex
+4. Constructs a valid [AtomicBEEF (BRC-62)](https://bsv.brc.dev/transactions/0062) with the merkle path
+5. Internalizes the output into the wallet via the BRC-100 storage layer
+
+This ensures that when your agent creates payments, the resulting BEEF contains **real SPV proofs** that recipients can independently verify — no trust required.
+
+#### 4d. Verify your balance
+
 ```bash
 NODE_PATH=$(pwd)/packages/core/node_modules node skills/bsv-pay/scripts/bsv-agent-cli.mjs balance
 ```
+
+**Why is the import step necessary?** The BRC-100 wallet tracks UTXOs internally with their merkle proofs. Simply sending BSV to the address puts coins on-chain, but the wallet doesn't know about them. The `import` command bridges this gap — it fetches the cryptographic proof that your transaction was included in a block and registers the output as spendable. Without this, the wallet would show a zero balance and couldn't construct valid payment BEEFs.
+
+> **If you receive BSV from another A2A-BSV agent** (via the payment protocol), the wallet handles internalization automatically — no manual import needed. The `import` command is only for external funding (exchanges, wallets, faucets).
+
+> **Note on existing wallets**: The wallet database stores which network it was created for. If you previously set up a testnet wallet and now want mainnet, delete `~/.clawdbot/bsv-wallet/` and re-run setup. The CLI defaults to mainnet; use `BSV_NETWORK=testnet` for testnet operations.
 
 ### Step 5: Install the skill in your Clawdbot
 
@@ -115,7 +179,7 @@ Or send a payment protocol message directly:
 
 ### CLI Reference
 
-All commands output clean JSON. Set `BSV_WALLET_DIR` and `BSV_NETWORK` env vars to customize.
+All commands output clean JSON. Defaults to **mainnet**. Set `BSV_NETWORK=testnet` for testnet. Set `BSV_WALLET_DIR` to customize the wallet location.
 
 ```bash
 # Set up for convenience
@@ -124,12 +188,18 @@ alias bsv="NODE_PATH=$A2A_BSV/packages/core/node_modules node $A2A_BSV/skills/bs
 
 bsv setup                       # Create wallet (first run)
 bsv identity                    # Show identity public key
-bsv address                     # Show P2PKH receive address (for faucet/funding)
+bsv address                     # Show P2PKH receive address
 bsv balance                     # Check balance (confirmed/unconfirmed/total sats)
 bsv pay <pubkey> <sats> [desc]  # Create payment → returns BEEF + metadata
 bsv verify <beef_base64>        # Verify incoming payment BEEF
 bsv accept <beef> <prefix> <suffix> <senderKey> [desc]  # Accept payment
+bsv import <txid> [vout]         # Import confirmed external UTXO with merkle proof
+bsv refund <address>            # Sweep all on-chain UTXOs to address
 ```
+
+> **`import <txid> [vout]`**: The critical command for funding your wallet. After sending BSV to your address, wait for 1 confirmation, then run `bsv import <txid>`. This fetches the TSC merkle proof from WhatsonChain, constructs valid AtomicBEEF (BRC-62), and internalizes the output so the wallet can spend it with full SPV proofs. If the output you want isn't at index 0, specify the `vout`. Example: `bsv import b829d501...f1fe 0`
+
+> **`refund <address>`**: Sweep all on-chain UTXOs back to a specified address. Useful for returning funds to an exchange or moving to a different wallet. Fetches UTXOs directly from WhatsonChain, builds and signs a P2PKH sweep transaction, and broadcasts it.
 
 ### For non-Clawdbot users
 
@@ -143,7 +213,7 @@ cd packages/core && npm install && npm run build
 import { BSVAgentWallet } from '@a2a-bsv/core';
 
 const wallet = await BSVAgentWallet.create({
-  network: 'testnet',
+  network: 'mainnet',   // or 'testnet' for testing
   storageDir: './my-wallet'
 });
 

@@ -79,7 +79,7 @@ fi
 # 5. Create wallet
 # ---------------------------------------------------------------------------
 WALLET_DIR="${BSV_WALLET_DIR:-$HOME/.clawdbot/bsv-wallet}"
-NETWORK="${BSV_NETWORK:-testnet}"
+NETWORK="${BSV_NETWORK:-mainnet}"
 
 echo ""
 echo "→ Setting up wallet (network=$NETWORK, dir=$WALLET_DIR)..."
@@ -121,7 +121,9 @@ echo "  node $CLI balance      # Check balance"
 echo "  node $CLI pay <key> <sats>  # Send payment"
 echo ""
 echo "Next steps:"
-echo "  1. Get your testnet address:  node $CLI address"
-echo "  2. Fund it at:  https://witnessonchain.com/faucet/tbsv"
-echo "  3. Track your address at:  https://test.whatsonchain.com/address/<your-address>"
+echo "  1. Get your receive address:  node $CLI address"
+echo "  2. Fund it — send BSV from an exchange, HandCash, Centbee, or another agent"
+echo "  3. Track your address at:  https://whatsonchain.com/address/<your-address>"
 echo "  4. Symlink skill into Clawdbot:  ln -s $(cd "$REPO_ROOT" && pwd)/skills/bsv-pay ~/clawd/skills/bsv-pay"
+echo ""
+echo "For testnet: BSV_NETWORK=testnet bash $SKILL_DIR/scripts/setup.sh"

@@ -6,16 +6,18 @@
  *
  * Environment variables:
  *   BSV_WALLET_DIR  — wallet storage directory (default: ~/.clawdbot/bsv-wallet)
- *   BSV_NETWORK     — 'testnet' or 'mainnet' (default: testnet)
+ *   BSV_NETWORK     — 'mainnet' or 'testnet' (default: mainnet)
  *
  * Commands:
  *   setup                                    — Create wallet, show identity key
  *   identity                                 — Show identity public key
- *   address                                  — Show testnet/mainnet P2PKH receive address
+ *   address                                  — Show P2PKH receive address
  *   balance                                  — Show balance in satoshis
  *   pay <pubkey> <satoshis> [description]    — Create payment → JSON PaymentResult
  *   verify <beef_base64>                     — Verify incoming BEEF → JSON VerifyResult
  *   accept <beef> <prefix> <suffix> <senderKey> [description] — Accept payment
+ *   import <txid> [vout]                     — Import external UTXO with merkle proof
+ *   refund <address>                         — Sweep all on-chain UTXOs to address
  */
 
 // Suppress dotenv noise — it logs to console.log by default.
@@ -53,7 +55,7 @@ console.log = _origLog;
 // ---------------------------------------------------------------------------
 const WALLET_DIR = process.env.BSV_WALLET_DIR
   || path.join(os.homedir(), '.clawdbot', 'bsv-wallet');
-const NETWORK = process.env.BSV_NETWORK || 'testnet';
+const NETWORK = process.env.BSV_NETWORK || 'mainnet';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -201,13 +203,19 @@ async function cmdAccept(beef, derivationPrefix, derivationSuffix, senderIdentit
   ok(receipt);
 }
 
-async function cmdFund(rawTxHex, voutStr) {
-  if (!rawTxHex) {
-    return fail('Usage: fund <raw_tx_hex> [vout] — Import a raw P2PKH transaction paying to your root address');
+async function cmdImport(txidArg, voutStr) {
+  if (!txidArg) {
+    return fail('Usage: import <txid> [vout] — Import a confirmed external UTXO with merkle proof');
   }
   const vout = parseInt(voutStr || '0', 10);
+  const txid = txidArg.toLowerCase();
 
-  // Import SDK for Transaction parsing
+  // Validate txid format
+  if (!/^[0-9a-f]{64}$/.test(txid)) {
+    return fail('Invalid txid — must be 64 hex characters');
+  }
+
+  // Import SDK
   let sdk;
   try {
     sdk = await import('@bsv/sdk');
@@ -217,108 +225,282 @@ async function cmdFund(rawTxHex, voutStr) {
     const sdkPath = path.join(repoRoot, 'packages', 'core', 'node_modules', '@bsv', 'sdk', 'dist', 'esm', 'mod.js');
     sdk = await import(sdkPath);
   }
-  const { Transaction } = sdk;
+  const { Transaction, MerklePath, Beef } = sdk;
 
-  // Parse the raw transaction
-  const tx = Transaction.fromHex(rawTxHex);
-  const txid = tx.id('hex');
-  const output = tx.outputs[vout];
+  const wocNet = NETWORK === 'mainnet' ? 'main' : 'test';
+  const wocBase = `https://api.whatsonchain.com/v1/bsv/${wocNet}`;
+
+  // 1. Check if the transaction is confirmed
+  const txInfoResp = await fetch(`${wocBase}/tx/${txid}`);
+  if (!txInfoResp.ok) {
+    return fail(`Failed to fetch tx info: ${txInfoResp.status} ${await txInfoResp.text()}`);
+  }
+  const txInfo = await txInfoResp.json();
+
+  if (!txInfo.confirmations || txInfo.confirmations < 1) {
+    return fail(`Transaction ${txid} is unconfirmed (${txInfo.confirmations || 0} confirmations). Wait for at least 1 confirmation before importing.`);
+  }
+  const blockHeight = txInfo.blockheight;
+
+  // 2. Fetch the raw tx hex
+  const rawTxResp = await fetch(`${wocBase}/tx/${txid}/hex`);
+  if (!rawTxResp.ok) {
+    return fail(`Failed to fetch raw tx: ${rawTxResp.status} ${await rawTxResp.text()}`);
+  }
+  const rawTxHex = await rawTxResp.text();
+
+  // 3. Parse the transaction and validate the output
+  const sourceTx = Transaction.fromHex(rawTxHex);
+  const output = sourceTx.outputs[vout];
   if (!output) {
-    return fail(`Output index ${vout} not found in transaction (has ${tx.outputs.length} outputs)`);
+    return fail(`Output index ${vout} not found in transaction (has ${sourceTx.outputs.length} outputs)`);
   }
 
-  // For external funding (faucet, direct P2PKH), the BRC-100 wallet's
-  // internalizeAction requires valid AtomicBEEF with merkle proofs.
-  // Unconfirmed external txs don't have proofs yet, so we insert the UTXO
-  // directly into the wallet's SQLite storage.
-  let knexLib;
+  // 4. Fetch the TSC merkle proof
+  //    WhatsonChain's /proof/tsc endpoint returns the TSC standard format:
+  //    [{ index: number, txOrId: string, target: blockHash, nodes: string[] }]
+  //    where index is the tx's position in the block and nodes are the sibling
+  //    hashes needed to compute up to the merkle root (bottom-up, "*" = duplicate).
+  const proofResp = await fetch(`${wocBase}/tx/${txid}/proof/tsc`);
+  if (!proofResp.ok) {
+    return fail(`Failed to fetch merkle proof: ${proofResp.status} ${await proofResp.text()}`);
+  }
+  const proofData = await proofResp.json();
+
+  if (!Array.isArray(proofData) || proofData.length === 0) {
+    return fail('No merkle proof available for this transaction');
+  }
+  const proof = proofData[0];
+  const txIndex = proof.index;
+  const nodes = proof.nodes; // array of sibling hashes (bottom-up), "*" means duplicate
+
+  // 5. Convert TSC proof to SDK MerklePath
+  //
+  // MerklePath.path is an array of levels. Level 0 is the leaves (bottom).
+  // Each level is an array of {offset, hash, txid?, duplicate?} objects.
+  // At level 0: our txid (with txid:true) + its sibling.
+  // At level 1+: sibling hashes needed to compute up to the root.
+
+  const treeHeight = nodes.length;
+  const mpPath = [];
+
+  // Level 0: the txid leaf and its sibling
+  const level0 = [];
+  level0.push({ offset: txIndex, hash: txid, txid: true });
+  if (nodes[0] === '*') {
+    // Duplicate: sibling is same as our node
+    const siblingOffset0 = txIndex ^ 1;
+    level0.push({ offset: siblingOffset0, duplicate: true });
+  } else {
+    const siblingOffset0 = txIndex ^ 1;
+    level0.push({ offset: siblingOffset0, hash: nodes[0] });
+  }
+  level0.sort((a, b) => a.offset - b.offset);
+  mpPath.push(level0);
+
+  // Higher levels: each node gives us the sibling at that level
+  for (let i = 1; i < treeHeight; i++) {
+    const nodeOffset = txIndex >> i;
+    const siblingOffset = nodeOffset ^ 1;
+    if (nodes[i] === '*') {
+      mpPath.push([{ offset: siblingOffset, duplicate: true }]);
+    } else {
+      mpPath.push([{ offset: siblingOffset, hash: nodes[i] }]);
+    }
+  }
+
+  // Construct the MerklePath
+  const merklePath = new MerklePath(blockHeight, mpPath);
+
+  // 6. Build AtomicBEEF using the SDK's Beef class
+  sourceTx.merklePath = merklePath;
+
+  const beef = new Beef();
+  beef.mergeTransaction(sourceTx);
+
+  // Serialize as AtomicBEEF (prefix with ATOMIC_BEEF marker + txid)
+  const atomicBeefBytes = beef.toBinaryAtomic(txid);
+
+  // 7. Load wallet and import via storage.internalizeAction
+  //    We bypass the signer's internalizeAction (which enforces BRC-29 key derivation)
+  //    and call storage directly — external UTXOs (faucet, exchange) won't match a
+  //    BRC-29 derived key, but the output is still ours and the merkle proof is valid.
+  const wallet = await BSVAgentWallet.load({ network: NETWORK, storageDir: WALLET_DIR });
+  const identityKey = await wallet.getIdentityKey();
+
   try {
-    knexLib = (await import('knex')).default;
+    await wallet._setup.wallet.storage.internalizeAction({
+      tx: atomicBeefBytes,
+      outputs: [{
+        outputIndex: vout,
+        protocol: 'wallet payment',
+        paymentRemittance: {
+          derivationPrefix: 'imported',
+          derivationSuffix: txid.slice(0, 16),
+          senderIdentityKey: identityKey,
+        },
+      }],
+      description: 'External funding import',
+    });
+
+    // Check the new balance
+    const balance = await wallet.getBalance();
+    await wallet.destroy();
+
+    const explorerBase = NETWORK === 'mainnet'
+      ? 'https://whatsonchain.com'
+      : 'https://test.whatsonchain.com';
+
+    ok({
+      txid,
+      vout,
+      satoshis: output.satoshis,
+      blockHeight,
+      confirmations: txInfo.confirmations,
+      imported: true,
+      balance,
+      explorer: `${explorerBase}/tx/${txid}`,
+    });
+  } catch (err) {
+    await wallet.destroy();
+    fail(`Failed to import UTXO: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function cmdRefund(targetAddress) {
+  if (!targetAddress) {
+    return fail('Usage: refund <address> — Sweep all on-chain UTXOs to the given address');
+  }
+
+  // Load wallet identity to get the root key
+  const identityPath = path.join(WALLET_DIR, 'wallet-identity.json');
+  if (!fs.existsSync(identityPath)) {
+    return fail('Wallet not initialized. Run: setup');
+  }
+  const identity = JSON.parse(fs.readFileSync(identityPath, 'utf-8'));
+
+  // Import SDK
+  let sdk;
+  try {
+    sdk = await import('@bsv/sdk');
   } catch {
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
     const repoRoot = path.resolve(__dirname, '..', '..', '..');
-    knexLib = (await import(path.join(repoRoot, 'packages', 'core', 'node_modules', 'knex', 'knex.mjs'))).default;
+    const sdkPath = path.join(repoRoot, 'packages', 'core', 'node_modules', '@bsv', 'sdk', 'dist', 'esm', 'mod.js');
+    sdk = await import(sdkPath);
   }
 
-  // Find the wallet SQLite database
-  const dbFiles = fs.readdirSync(WALLET_DIR).filter(f => f.endsWith('.sqlite') && f !== 'wallet.sqlite');
-  if (dbFiles.length === 0) {
-    return fail('No wallet database found. Run setup first.');
+  const { PrivateKey, PublicKey, Hash, Utils, Transaction, P2PKH } = sdk;
+  const privKey = PrivateKey.fromHex(identity.rootKeyHex);
+  const pubKey = privKey.toPublicKey();
+
+  // Derive source address (same as cmdAddress)
+  const pubKeyBytes = pubKey.encode(true);
+  const hash160 = Hash.hash160(pubKeyBytes);
+  const prefix = NETWORK === 'mainnet' ? 0x00 : 0x6f;
+  const payload = new Uint8Array([prefix, ...hash160]);
+  const checksum = Hash.hash256(Array.from(payload)).slice(0, 4);
+  const addressBytes = new Uint8Array([...payload, ...checksum]);
+  const sourceAddress = Utils.toBase58(Array.from(addressBytes));
+
+  const wocNet = NETWORK === 'mainnet' ? 'main' : 'test';
+  const wocBase = `https://api.whatsonchain.com/v1/bsv/${wocNet}`;
+
+  // 1. Fetch UTXOs
+  const utxoResp = await fetch(`${wocBase}/address/${sourceAddress}/unspent`);
+  if (!utxoResp.ok) {
+    return fail(`Failed to fetch UTXOs: ${utxoResp.status} ${await utxoResp.text()}`);
   }
-  const dbPath = path.join(WALLET_DIR, dbFiles[0]);
+  const utxos = await utxoResp.json();
+  if (!utxos || utxos.length === 0) {
+    return fail(`No UTXOs found for ${sourceAddress} on ${NETWORK}`);
+  }
 
-  const knex = knexLib({ client: 'sqlite3', connection: { filename: dbPath }, useNullAsDefault: true });
-
-  try {
-    // Get the user
-    const user = await knex('users').first();
-    if (!user) { await knex.destroy(); return fail('No user found in wallet database'); }
-
-    // Get the default basket
-    const basket = await knex('output_baskets').where({ userId: user.userId, name: 'default' }).first();
-    if (!basket) { await knex.destroy(); return fail('No default basket found'); }
-
-    // Check if this UTXO is already imported
-    const existing = await knex('outputs').where({ txid, vout }).first();
-    if (existing) {
-      await knex.destroy();
-      return ok({ txid, satoshis: output.satoshis, vout, alreadyImported: true });
+  // 2. Fetch raw source transactions for each UTXO
+  const sourceTxCache = {};
+  for (const utxo of utxos) {
+    if (!sourceTxCache[utxo.tx_hash]) {
+      const txResp = await fetch(`${wocBase}/tx/${utxo.tx_hash}/hex`);
+      if (!txResp.ok) {
+        return fail(`Failed to fetch source tx ${utxo.tx_hash}: ${txResp.status}`);
+      }
+      sourceTxCache[utxo.tx_hash] = await txResp.text();
     }
-
-    // Insert a proven_txs record for the transaction (unconfirmed)
-    const [provenTxId] = await knex('proven_txs').insert({
-      txid,
-      height: 0,
-      index: 0,
-      merklePath: '',
-      rawTx: Buffer.from(rawTxHex, 'hex'),
-      blockHash: '',
-      merkleRoot: '',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
-
-    // Insert a transactions record
-    const [transactionId] = await knex('transactions').insert({
-      userId: user.userId,
-      provenTxId,
-      status: 'unproven',
-      reference: `fund-${txid.slice(0, 12)}`,
-      isOutgoing: 0,
-      satoshis: output.satoshis,
-      description: 'External funding',
-      txid,
-      rawTx: Buffer.from(rawTxHex, 'hex'),
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
-
-    // Insert the output record
-    await knex('outputs').insert({
-      userId: user.userId,
-      transactionId,
-      basketId: basket.basketId,
-      spendable: 1,
-      change: 0,
-      vout,
-      satoshis: output.satoshis,
-      providedBy: 'external',
-      purpose: 'funding',
-      type: 'P2PKH',
-      outputDescription: 'External funding',
-      txid,
-      lockingScript: output.lockingScript.toHex(),
-      scriptLength: output.lockingScript.toHex().length / 2,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
-
-    await knex.destroy();
-    ok({ txid, satoshis: output.satoshis, vout, imported: true });
-  } catch (err) {
-    await knex.destroy();
-    fail(`Failed to import UTXO: ${err instanceof Error ? err.message : String(err)}`);
   }
+
+  // 3. Build the sweep transaction
+  const tx = new Transaction();
+  let totalInput = 0;
+
+  for (const utxo of utxos) {
+    const sourceTx = Transaction.fromHex(sourceTxCache[utxo.tx_hash]);
+    const sourceOutput = sourceTx.outputs[utxo.tx_pos];
+
+    tx.addInput({
+      sourceTransaction: sourceTx,
+      sourceOutputIndex: utxo.tx_pos,
+      unlockingScriptTemplate: new P2PKH().unlock(privKey),
+    });
+
+    totalInput += utxo.value;
+  }
+
+  // Decode target address to get its hash160
+  const targetDecoded = Utils.fromBase58(targetAddress);
+  const targetHash160 = targetDecoded.slice(1, 21); // skip version byte, take 20 bytes
+
+  // Add output with placeholder amount (will adjust after fee calc)
+  tx.addOutput({
+    lockingScript: new P2PKH().lock(targetHash160),
+    satoshis: totalInput, // placeholder
+  });
+
+  // Calculate fee: 1 sat/kB, minimum 100 sats
+  // Estimate size: ~148 bytes per input + 34 bytes per output + 10 overhead
+  const estimatedSize = utxos.length * 148 + 34 + 10;
+  const calculatedFee = Math.ceil(estimatedSize / 1000); // 1 sat/kB
+  const fee = Math.max(calculatedFee, 100);
+
+  if (totalInput <= fee) {
+    return fail(`Total UTXO value (${totalInput} sats) is not enough to cover fee (${fee} sats)`);
+  }
+
+  // Set actual output amount
+  tx.outputs[0].satoshis = totalInput - fee;
+
+  // Sign and serialize
+  await tx.sign();
+  const rawTxHex = tx.toHex();
+  const txid = tx.id('hex');
+
+  // 4. Broadcast
+  const broadcastResp = await fetch(`${wocBase}/tx/raw`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ txhex: rawTxHex }),
+  });
+
+  if (!broadcastResp.ok) {
+    const errText = await broadcastResp.text();
+    return fail(`Broadcast failed: ${broadcastResp.status} — ${errText}`);
+  }
+  const broadcastResult = await broadcastResp.text();
+
+  const explorerBase = NETWORK === 'mainnet'
+    ? 'https://whatsonchain.com'
+    : 'https://test.whatsonchain.com';
+
+  ok({
+    txid: broadcastResult.replace(/"/g, '').trim(),
+    satoshisSent: totalInput - fee,
+    fee,
+    inputCount: utxos.length,
+    totalInput,
+    from: sourceAddress,
+    to: targetAddress,
+    network: NETWORK,
+    explorer: `${explorerBase}/tx/${txid}`,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -349,11 +531,14 @@ try {
     case 'accept':
       await cmdAccept(args[0], args[1], args[2], args[3], args.slice(4).join(' ') || undefined);
       break;
-    case 'fund':
-      await cmdFund(args[0], args[1]);
+    case 'import':
+      await cmdImport(args[0], args[1]);
+      break;
+    case 'refund':
+      await cmdRefund(args[0]);
       break;
     default:
-      fail(`Unknown command: ${command || '(none)'}. Available: setup, identity, address, balance, pay, verify, accept, fund`);
+      fail(`Unknown command: ${command || '(none)'}. Available: setup, identity, address, balance, pay, verify, accept, import, refund`);
   }
 } catch (err) {
   fail(err instanceof Error ? err.message : String(err));
