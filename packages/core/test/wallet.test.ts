@@ -39,20 +39,20 @@ async function run() {
 
   // ── Verify payment (pure, no wallet needed) ──────────────────────────
 
-  await test('verifyPayment rejects empty beef', () => {
-    const result = verifyPayment({ beef: '' });
+  await test('verifyPayment rejects empty beef', async () => {
+    const result = await verifyPayment({ beef: '' });
     assert(!result.valid, 'should be invalid');
     assert(result.errors.length > 0, 'should have errors');
   });
 
-  await test('verifyPayment rejects garbage base64', () => {
-    const result = verifyPayment({ beef: 'dGhpcyBpcyBub3QgYmVlZg==' });
+  await test('verifyPayment rejects garbage base64', async () => {
+    const result = await verifyPayment({ beef: 'dGhpcyBpcyBub3QgYmVlZg==' });
     assert(!result.valid, 'should be invalid');
     assert(result.errors.length > 0, 'should have errors');
   });
 
-  await test('verifyPayment validates expectedSender format', () => {
-    const result = verifyPayment({
+  await test('verifyPayment validates expectedSender format', async () => {
+    const result = await verifyPayment({
       beef: 'dGhpcyBpcyBub3QgYmVlZg==',
       expectedSender: 'not-a-pubkey',
     });

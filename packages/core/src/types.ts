@@ -12,6 +12,8 @@ export interface WalletConfig {
   rootKeyHex?: string;
   /** Optional TAAL API key for ARC broadcasting. Falls back to public default. */
   taalApiKey?: string;
+  /** Optional fee model in sat/KB. Falls back to BSV_FEE_MODEL env var or default 100 sat/KB. */
+  feeModel?: number;
 }
 
 /** Parameters for building a payment transaction. */

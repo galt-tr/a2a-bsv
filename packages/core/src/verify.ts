@@ -18,12 +18,10 @@ import type { InternalizeActionArgs } from '@bsv/sdk';
  * - Decodes the base64 BEEF
  * - Checks the BEEF is parseable
  * - Checks there is at least one transaction
+ * - Runs SPV verification via tx.verify()
  * - Optionally checks the sender identity key
- *
- * Note: Full SPV verification (merkle proofs against block headers) happens
- * when the wallet internalizes the action. This function is a pre-check.
  */
-export function verifyPayment(params: VerifyParams): VerifyResult {
+export async function verifyPayment(params: VerifyParams): Promise<VerifyResult> {
   const errors: string[] = [];
   let txid = '';
   let outputCount = 0;
@@ -42,6 +40,14 @@ export function verifyPayment(params: VerifyParams): VerifyResult {
       const tx = beef.findAtomicTransaction(txid);
       if (tx) {
         outputCount = tx.outputs.length;
+        
+        // Run SPV verification
+        try {
+          await tx.verify();
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          errors.push(`SPV verification failed: ${message}`);
+        }
       } else {
         errors.push('Could not find atomic transaction in BEEF');
       }
