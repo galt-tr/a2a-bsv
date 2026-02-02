@@ -45,7 +45,7 @@ const payment = await agentA.createPayment({
 });
 
 // 3. Agent B verifies the payment
-const verification = agentB.verifyPayment({
+const verification = await agentB.verifyPayment({
   beef: payment.beef,
 });
 
@@ -123,10 +123,10 @@ interface PaymentResult {
 
 #### Payments (Receiver Side)
 
-**Verify** (structural pre-check):
+**Verify** (includes SPV verification):
 
 ```typescript
-const result = wallet.verifyPayment({
+const result = await wallet.verifyPayment({
   beef: payment.beef,
   expectedSender: senderKey,  // Optional
 });

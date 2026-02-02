@@ -14,9 +14,9 @@ import type { CachedKeyDeriver } from '@bsv/sdk';
 /**
  * Build a BRC-29 payment transaction using the wallet's createAction API.
  *
- * The transaction is created with `noSend: true` — the sender does NOT broadcast.
- * The resulting Atomic BEEF and derivation metadata are returned so the recipient
- * can verify and internalize the payment on their side.
+ * The transaction is created with `acceptDelayedBroadcast: false` — the sender
+ * broadcasts immediately. The resulting Atomic BEEF and derivation metadata are
+ * returned so the recipient can verify and internalize the payment on their side.
  */
 export async function buildPayment(
   setup: SetupWallet,
@@ -70,14 +70,13 @@ export async function buildPayment(
     ],
     options: {
       randomizeOutputs: false,
-      noSend: true,
+      acceptDelayedBroadcast: false,
     },
     labels: [label],
     description: desc,
   });
 
-  // Extract the txid from the noSend result.
-  // With noSend, car.signableTransaction is undefined; we get tx as AtomicBEEF.
+  // Extract the txid from the createAction result.
   // The tx field is a number[] (AtomicBEEF binary). Parse it to get txid.
   if (!car.tx) {
     throw new Error('createAction did not return a transaction. Check wallet funding.');

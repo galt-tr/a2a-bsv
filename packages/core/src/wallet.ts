@@ -178,11 +178,10 @@ export class BSVAgentWallet {
   /**
    * Verify an incoming Atomic BEEF payment.
    *
-   * This is a structural pre-check. Full SPV verification happens when
-   * you call `acceptPayment()`, which invokes `wallet.internalizeAction()`.
+   * This performs structural validation and SPV verification via tx.verify().
    */
-  verifyPayment(params: VerifyParams): VerifyResult {
-    return verifyPayment(params);
+  async verifyPayment(params: VerifyParams): Promise<VerifyResult> {
+    return await verifyPayment(params);
   }
 
   /**
@@ -253,12 +252,16 @@ export class BSVAgentWallet {
       useNullAsDefault: true,
     });
 
+    // Fee model: configurable via BSV_FEE_MODEL env var (default: 100 sat/KB)
+    const feeModelValue = config.feeModel ?? 
+      (process.env.BSV_FEE_MODEL ? parseInt(process.env.BSV_FEE_MODEL, 10) : 100);
+
     const activeStorage = new StorageKnex({
       chain,
       knex,
       commissionSatoshis: 0,
       commissionPubKeyHex: undefined,
-      feeModel: { model: 'sat/kb', value: 1 },
+      feeModel: { model: 'sat/kb', value: feeModelValue },
     });
 
     await activeStorage.migrate(DEFAULT_DB_NAME, randomBytesHex(33));
